@@ -1,0 +1,6 @@
+.env
+dist/
+.idea
+idea/
+.vscode
+vscode.json
