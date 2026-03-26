@@ -4,3 +4,4 @@ dist/
 idea/
 .vscode
 vscode.json
+node_modules/
