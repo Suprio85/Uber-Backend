@@ -49,21 +49,6 @@ export function canTransition(current: RideStatus, next: RideStatus): boolean {
 }
 
 
-export async function assertTransitionAllowed(rideId: string, next: RideStatus): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const ride = await getRideById(rideId);
-  if (!ride) {
-    return { ok: false, reason: 'Ride not found' };
-  }
-
-  if (!canTransition(ride.status, next)) {
-    return {
-      ok: false,
-      reason: `Invalid ride transition from ${ride.status} to ${next}`,
-    };
-  }
-
-  return { ok: true };
-}
 
 
 export async function emitStatusChange(rideId: string, status: RideStatus): Promise<void> {
@@ -131,4 +116,71 @@ export async function markPinVerified(rideId: string): Promise<void> {
     trackingPhase: 'trip',
     timestamp: new Date().toISOString(),
   });
+}
+
+
+
+export async function setManualRideStatus(rideId: string, status: RideStatus): Promise<void> {
+  await updateRideStatus(rideId, status);
+
+  if (status === 'RIDE_ACTIVE') {
+    await updateRideStartedAt(rideId);
+  }
+
+  if (status === 'DESTINATION_REACHED' || status === 'COMPLETED') {
+    await updateRideCompletedAt(rideId, parseFloat((50 + Math.random() * 200).toFixed(2)));
+  }
+
+  await emitStatusChange(rideId, status);
+
+  if (status === 'DRIVER_ARRIVED') {
+    emitToRide(rideId, 'driver:arrived', {
+      rideId,
+      trackingPhase: 'arrival',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  if (status === 'PIN_VERIFIED') {
+    emitToRide(rideId, 'ride:pin_verified', {
+      rideId,
+      trackingPhase: 'trip',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  if (status === 'RIDE_ACTIVE') {
+    emitToRide(rideId, 'ride:started', {
+      rideId,
+      trackingPhase: 'trip',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  if (status === 'DESTINATION_REACHED') {
+    emitToRide(rideId, 'ride:completed', {
+      rideId,
+      totalFare: 100,
+      duration: 'Demo trip',
+      trackingPhase: 'completed',
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
+
+export async function assertTransitionAllowed(rideId: string, next: RideStatus): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const ride = await getRideById(rideId);
+  if (!ride) {
+    return { ok: false, reason: 'Ride not found' };
+  }
+
+  if (!canTransition(ride.status, next)) {
+    return {
+      ok: false,
+      reason: `Invalid ride transition from ${ride.status} to ${next}`,
+    };
+  }
+
+  return { ok: true };
 }
