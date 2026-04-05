@@ -7,7 +7,11 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "eslint src/ --ext .ts",
-    "test": "jest --forceExit --detectOpenHandles"
+    "test": "npm run test:unit",
+    "test:unit": "jest --forceExit --detectOpenHandles",
+    "test:e2e:websocket": "node src/__tests__/websocket-test.js",
+    "test:e2e:osrm": "node src/__tests__/websocket-osrm-test.js",
+    "test:all": "npm run test:unit && npm run test:e2e:websocket && npm run test:e2e:osrm"
   },
   "dependencies": {
     "cors": "^2.8.5",
