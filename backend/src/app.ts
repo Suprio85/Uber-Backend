@@ -1,4 +1,4 @@
-import express from 'express';
+import express from 'express'; 
 import { createServer } from 'http';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -13,33 +13,23 @@ dotenv.config();
 const app = express();
 const server = createServer(app);
 
-//Allow both local + deployed frontend
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://uber-frontend-gray.vercel.app"
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+
+const ALLOWED_ORIGINS = [
+  CLIENT_ORIGIN,
+  'https://uber-frontend-gray.vercel.app',
 ];
 
-//CORS setup (handles API requests)
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
+// CORS
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true
-}));
-
-//Body parser
+// Body parser
 app.use(express.json());
 
-//Socket.io (pass allowed origins)
-initSocket(server, allowedOrigins);
+// Socket.io
+initSocket(server, CLIENT_ORIGIN);
 
-//Routes
+// Routes
 app.use(healthRoutes);
 app.use('/api/v1/rides', rideRoutes);
 app.use('/api/v1/driver', driverRoutes);
