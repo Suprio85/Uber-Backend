@@ -159,6 +159,19 @@ export async function updateRidePinVerified(id: string): Promise<Ride | null> {
 }
 
 
+export async function submitRating(
+  rideId: string,
+  raterType: 'rider' | 'driver',
+  rating: number
+): Promise<Ride | null> {
+  const column = raterType === 'rider' ? 'rider_rating' : 'driver_rating';
+  const result = await pool.query(
+    `UPDATE rides SET ${column} = $1, updated_at = now() WHERE id = $2 RETURNING *`,
+    [rating, rideId]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function insertLocationLog(
   rideId: string,
   actorType: LocationActor,
@@ -211,4 +224,44 @@ export async function findPendingRide(): Promise<Ride | null> {
      LIMIT 1`
   );
   return result.rows[0] ?? null;
+}
+
+
+export async function getRideRatings(
+  rideId: string
+): Promise<{ riderRating: number | null; driverRating: number | null } | null> {
+  const result = await pool.query(
+    'SELECT rider_rating AS "riderRating", driver_rating AS "driverRating" FROM rides WHERE id = $1',
+    [rideId]
+  );
+  return result.rows[0] ?? null;
+}
+
+
+export async function getLocationLogs(
+  rideId: string,
+  actorType?: LocationActor,
+  limit: number = 50
+): Promise<RideLocation[]> {
+  if (actorType) {
+    const result = await pool.query(
+      `SELECT actor_type, lat, lng, heading, speed, recorded_at
+       FROM location_logs
+       WHERE ride_id = $1 AND actor_type = $2
+       ORDER BY recorded_at DESC
+       LIMIT $3`,
+      [rideId, actorType, limit]
+    );
+    return result.rows;
+  }
+
+  const result = await pool.query(
+    `SELECT actor_type, lat, lng, heading, speed, recorded_at
+     FROM location_logs
+     WHERE ride_id = $1
+     ORDER BY recorded_at DESC
+     LIMIT $2`,
+    [rideId, limit]
+  );
+  return result.rows;
 }
