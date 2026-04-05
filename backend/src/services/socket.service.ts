@@ -1,3 +1,4 @@
+import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { z } from 'zod';
 import { getRideById, insertLocationLog } from '../models/ride.model';
