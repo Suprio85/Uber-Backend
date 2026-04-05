@@ -13,6 +13,19 @@ let io: Server;
 
 type SocketRole = 'driver' | 'rider';
 
+
+const rideActionSchema = z.object({
+  rideId: z.string().uuid(),
+});
+
+
+const completeRideSchema = z.object({
+  rideId: z.string().uuid(),
+  finalFare: z.number().min(0).optional(),
+  duration: z.string().optional(),
+});
+
+
 const presence = new Map<string, { drivers: Set<string>; riders: Set<string> }>();
 
 
@@ -28,6 +41,11 @@ const locationSchema = z.object({
   distanceRemaining: z.string().optional(),
   trackingPhase: z.enum(['arrival', 'trip', 'completed']).optional(),
   timestamp: z.string().optional(),
+});
+
+const joinSchema = z.object({
+  rideId: z.string().uuid(),
+  role: z.enum(['driver', 'rider']),
 });
 
 
@@ -208,3 +226,156 @@ async function handleRiderLocation(socket: Socket, rawData: unknown): Promise<vo
     timestamp: data.timestamp ?? new Date().toISOString(),
   });
 }
+
+
+export function initSocket(server: HttpServer, clientOrigin: string): Server {
+  io = new Server(server, {
+    cors: {
+      origin: clientOrigin,
+      methods: ['GET', 'POST'],
+    },
+  });
+
+  io.on('connection', (socket: Socket) => {
+    socket.on('ride:join', async (rawData) => {
+      try {
+        const data = joinSchema.parse(rawData);
+        await joinRide(socket, data.rideId, data.role);
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid join payload' });
+      }
+    });
+
+    socket.on('driver:join', async (rawData) => {
+      try {
+        const data = rideActionSchema.parse(rawData);
+        await joinRide(socket, data.rideId, 'driver');
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid driver join payload' });
+      }
+    });
+
+    socket.on('rider:join', async (rawData) => {
+      try {
+        const data = rideActionSchema.parse(rawData);
+        await joinRide(socket, data.rideId, 'rider');
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid rider join payload' });
+      }
+    });
+
+    socket.on('ride:leave', () => {
+      const rideId = socket.data.rideId as string | undefined;
+      const role = socket.data.role as SocketRole | undefined;
+      if (rideId) {
+        socket.leave(getRideRoom(rideId));
+      }
+      if (rideId && role) {
+        socket.leave(getRoleRoom(rideId, role));
+      }
+      removePresence(socket);
+      if (rideId) {
+        emitPresence(rideId);
+      }
+    });
+
+    socket.on('driver:location:update', async (rawData) => {
+      try {
+        await handleDriverLocation(socket, rawData);
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid driver location payload' });
+      }
+    });
+
+    socket.on('rider:location:update', async (rawData) => {
+      try {
+        await handleRiderLocation(socket, rawData);
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid rider location payload' });
+      }
+    });
+
+    socket.on('driver:heading_to_pickup', async (rawData) => {
+      try {
+        if (socket.data.role !== 'driver') {
+          socket.emit('socket:error', { error: 'Only driver clients can start heading to pickup' });
+          return;
+        }
+        const data = rideActionSchema.parse(rawData);
+        const result = await assertTransitionAllowed(data.rideId, 'DRIVER_EN_ROUTE');
+        if (!result.ok) {
+          socket.emit('socket:error', { error: result.reason, rideId: data.rideId });
+          return;
+        }
+        await markDriverHeadingToPickup(data.rideId);
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid heading_to_pickup payload' });
+      }
+    });
+
+    socket.on('driver:arrived_at_pickup', async (rawData) => {
+      try {
+        if (socket.data.role !== 'driver') {
+          socket.emit('socket:error', { error: 'Only driver clients can mark arrival at pickup' });
+          return;
+        }
+        const data = rideActionSchema.parse(rawData);
+        const result = await assertTransitionAllowed(data.rideId, 'DRIVER_ARRIVED');
+        if (!result.ok) {
+          socket.emit('socket:error', { error: result.reason, rideId: data.rideId });
+          return;
+        }
+        await markDriverArrived(data.rideId);
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid arrived_at_pickup payload' });
+      }
+    });
+
+    socket.on('driver:start_ride', async (rawData) => {
+      try {
+        if (socket.data.role !== 'driver') {
+          socket.emit('socket:error', { error: 'Only driver clients can start the ride' });
+          return;
+        }
+        const data = rideActionSchema.parse(rawData);
+        const result = await assertTransitionAllowed(data.rideId, 'RIDE_ACTIVE');
+        if (!result.ok) {
+          socket.emit('socket:error', { error: result.reason, rideId: data.rideId });
+          return;
+        }
+        await startRide(data.rideId);
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid start_ride payload' });
+      }
+    });
+
+    socket.on('driver:complete_ride', async (rawData) => {
+      try {
+        if (socket.data.role !== 'driver') {
+          socket.emit('socket:error', { error: 'Only driver clients can complete the ride' });
+          return;
+        }
+        const data = completeRideSchema.parse(rawData);
+        const result = await assertTransitionAllowed(data.rideId, 'DESTINATION_REACHED');
+        if (!result.ok) {
+          socket.emit('socket:error', { error: result.reason, rideId: data.rideId });
+          return;
+        }
+        await completeRide(data.rideId, data.finalFare, data.duration);
+      } catch (error) {
+        socket.emit('socket:error', { error: 'Invalid complete_ride payload' });
+      }
+    });
+
+    socket.on('disconnect', () => {
+      const rideId = socket.data.rideId as string | undefined;
+      removePresence(socket);
+      if (rideId) {
+        emitPresence(rideId);
+      }
+    });
+  });
+
+  return io;
+}
+
