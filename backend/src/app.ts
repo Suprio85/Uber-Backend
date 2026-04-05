@@ -13,18 +13,32 @@ dotenv.config();
 const app = express();
 const server = createServer(app);
 
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+//Allow both local + deployed frontend
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://uber-frontend-gray.vercel.app"
+];
 
-// CORS
-app.use(cors({ origin: CLIENT_ORIGIN, credentials: true }));
+//CORS setup (handles API requests)
+app.use(cors({
+  origin: function (origin, callback) {
+    // allow requests with no origin (like Postman, curl)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true
+}));
 
-// Body parser
+//Body parser
 app.use(express.json());
 
-// Socket.io
-initSocket(server, CLIENT_ORIGIN);
+//Socket.io (pass allowed origins)
+initSocket(server, allowedOrigins);
 
-// Routes
+//Routes
 app.use(healthRoutes);
 app.use('/api/v1/rides', rideRoutes);
 app.use('/api/v1/driver', driverRoutes);
