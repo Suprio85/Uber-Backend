@@ -1,10 +1,34 @@
 import { Server, Socket } from 'socket.io';
+import { z } from 'zod';
+import { getRideById, insertLocationLog } from '../models/ride.model';
+import {
+  assertTransitionAllowed,
+  completeRide,
+  markDriverArrived,
+  markDriverHeadingToPickup,
+  startRide,
+} from './rideState.service';
 
 let io: Server;
 
 type SocketRole = 'driver' | 'rider';
 
 const presence = new Map<string, { drivers: Set<string>; riders: Set<string> }>();
+
+
+const locationSchema = z.object({
+  rideId: z.string().uuid(),
+  lat: z.number(),
+  lng: z.number(),
+  heading: z.number().min(0).max(360),
+  speed: z.number().min(0),
+  progress: z.number().min(0).max(100).optional(),
+  eta: z.string().optional(),
+  etaSeconds: z.number().min(0).optional(),
+  distanceRemaining: z.string().optional(),
+  trackingPhase: z.enum(['arrival', 'trip', 'completed']).optional(),
+  timestamp: z.string().optional(),
+});
 
 
 function getRideRoom(rideId: string): string {
@@ -116,4 +140,71 @@ export function getRidePresence(rideId: string): {
     driverSockets: record.drivers.size,
     riderSockets: record.riders.size,
   };
+}
+
+
+async function handleDriverLocation(socket: Socket, rawData: unknown): Promise<void> {
+  if (socket.data.role !== 'driver') {
+    socket.emit('socket:error', { error: 'Only driver clients can send driver location updates' });
+    return;
+  }
+  const data = locationSchema.parse(rawData);
+  const ride = await getRideById(data.rideId);
+  if (!ride) {
+    socket.emit('socket:error', { error: 'Ride not found', rideId: data.rideId });
+    return;
+  }
+  if (!['DRIVER_EN_ROUTE', 'RIDE_ACTIVE'].includes(ride.status)) {
+    socket.emit('socket:error', {
+      error: `Driver location updates are not allowed while ride status is ${ride.status}`,
+      rideId: data.rideId,
+    });
+    return;
+  }
+  await insertLocationLog(data.rideId, 'driver', data.lat, data.lng, data.heading, data.speed);
+  emitToRideRole(data.rideId, 'rider', 'driver:location', {
+    ...data,
+    trackingPhase: data.trackingPhase ?? 'arrival',
+    timestamp: data.timestamp ?? new Date().toISOString(),
+  });
+
+  if (typeof data.progress === 'number') {
+    emitToRide(data.rideId, 'ride:progress', {
+      rideId: data.rideId,
+      progress: data.progress,
+      eta: data.eta,
+      etaSeconds: data.etaSeconds,
+      distanceRemaining: data.distanceRemaining,
+      speed: data.speed,
+      trackingPhase: data.trackingPhase ?? 'arrival',
+      timestamp: data.timestamp ?? new Date().toISOString(),
+    });
+  }
+}
+
+
+async function handleRiderLocation(socket: Socket, rawData: unknown): Promise<void> {
+  if (socket.data.role !== 'rider') {
+    socket.emit('socket:error', { error: 'Only rider clients can send rider location updates' });
+    return;
+  }
+  const data = locationSchema.parse(rawData);
+  const ride = await getRideById(data.rideId);
+  if (!ride) {
+    socket.emit('socket:error', { error: 'Ride not found', rideId: data.rideId });
+    return;
+  }
+  if (ride.status !== 'RIDE_ACTIVE') {
+    socket.emit('socket:error', {
+      error: `Rider location updates are only allowed during an active ride. Current status: ${ride.status}`,
+      rideId: data.rideId,
+    });
+    return;
+  }
+  await insertLocationLog(data.rideId, 'rider', data.lat, data.lng, data.heading, data.speed);
+  emitToRideRole(data.rideId, 'driver', 'rider:location', {
+    ...data,
+    trackingPhase: data.trackingPhase ?? 'trip',
+    timestamp: data.timestamp ?? new Date().toISOString(),
+  });
 }
