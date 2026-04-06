@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import * as RideModel from '../models/ride.model';
 import * as DriverModel from '../models/driver.model';
 import { emitToRide } from '../services/socket.service';
-import { getTrackingPhase, markPinVerified } from '../services/rideState.service';
+import { getTrackingPhase, markPinVerified, calculateFare } from '../services/rideState.service';
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -28,7 +28,7 @@ export async function createRide(req: Request, res: Response, next: NextFunction
     }
 
     const pin = generatePin();
-    const estimatedFare = parseFloat((50 + Math.random() * 200).toFixed(2));
+    const estimatedFare = calculateFare(req.body.pickupLat, req.body.pickupLng, req.body.destLat, req.body.destLng);
     const ride = await RideModel.createRide(req.body, driver.id, pin, estimatedFare);
 
     res.status(201).json({
@@ -145,7 +145,7 @@ export async function updateRoute(req: Request, res: Response, next: NextFunctio
       }
   
       const { destLat, destLng, destAddress } = req.body;
-      const newFare = parseFloat((50 + Math.random() * 200).toFixed(2));
+      const newFare = calculateFare(ride.pickup_lat, ride.pickup_lng, destLat, destLng);
       const updatedRide = await RideModel.updateRideDestination(id, destLat, destLng, destAddress, newFare);
       if (!updatedRide) {
         res.status(404).json({ error: 'Ride not found' });
